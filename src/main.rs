@@ -57,11 +57,13 @@ fn files(args: &Args, uuid: &str) -> Result<ExitCode> {
     } else {
         TraceOutput::find(&args.output_dir, uuid)
     }?;
-    let mut report = Report::default();
+    let mut trace_logs = vec![];
     for log in output.strace_files() {
         let trace_log = parser::parse_file(log.path())?;
-        trace_log.drive(&mut report);
+        trace_logs.push(trace_log);
     }
+    let mut report = Report::default();
+    trace_logs.drive(&mut report);
     for file in report.files {
         println!("{}", file.to_string_lossy());
     }
