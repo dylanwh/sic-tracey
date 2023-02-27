@@ -49,6 +49,9 @@ impl Report {
         if !path.is_absolute() {
             return;
         }
+        if path.starts_with("/proc") {
+            return;
+        }
         if let Ok(m) = path.metadata() {
             if m.is_file() || m.is_dir() || m.is_symlink() {
                 self.files.insert(path.to_owned());
