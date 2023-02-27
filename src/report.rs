@@ -46,23 +46,16 @@ impl Report {
         P: AsRef<Path>,
     {
         let path = path.as_ref();
-        if !path.is_absolute() {
+        let ignore = path.starts_with("/proc")
+            || path.starts_with("/sys")
+            || path.starts_with("/dev")
+            || path.starts_with("/run")
+            || path.starts_with("/tmp")
+            || !path.is_absolute();
+        if ignore {
             return;
         }
-        if path.starts_with("/proc") {
-            return;
-        }
-        if let Ok(m) = path.metadata() {
-            if m.is_file() || m.is_dir() || m.is_symlink() {
-                self.files.insert(path.to_owned());
-            }
-            // also insert the target of symlinks
-            if m.is_symlink() {
-                if let Ok(target) = path.read_link() {
-                    self.insert(target);
-                }
-            }
-        }
+        self.files.insert(path.to_path_buf());
     }
 }
 
