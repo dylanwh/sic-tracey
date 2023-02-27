@@ -28,6 +28,8 @@ fn main() -> Result<ExitCode> {
         Action::List => list(&args),
 
         Action::Junk { uuid } => junk(&args, &uuid),
+
+        Action::Parse { file } => parse(&args, &file),
     }
 }
 
@@ -101,5 +103,11 @@ fn list(args: &Args) -> Result<ExitCode> {
         let output = TraceOutput::open(dir)?;
         println!("{} ({})", output.uuid.simple(), output.program.join(" "));
     }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn parse(_args: &Args, file: &str) -> Result<ExitCode> {
+    let trace_log = parser::parse_file(file)?;
+    println!("{}", serde_json::to_string_pretty(&trace_log)?);
     Ok(ExitCode::SUCCESS)
 }

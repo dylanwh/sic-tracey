@@ -9,7 +9,7 @@ use nom::{
     },
     combinator::opt,
     multi::{many0, separated_list0, separated_list1},
-    sequence::{delimited, preceded, terminated},
+    sequence::{delimited, preceded},
     IResult,
 };
 use std::str::FromStr;
@@ -27,6 +27,15 @@ where
 fn parse_lines(input: &str) -> IResult<&str, TraceLog> {
     let (input, traces) = separated_list1(tag("\n"), parse_line)(input)?;
     let (input, _) = opt(tag("\n"))(input)?;
+
+    let mut traces = traces;
+    if !input.is_empty() {
+        let junk: Vec<Trace> = input
+            .lines()
+            .map(|line| Trace::Junk(line.to_string()))
+            .collect();
+        traces.extend(junk);
+    }
 
     Ok((input, TraceLog { traces }))
 }
@@ -47,10 +56,7 @@ pub fn parse_call(input: &str) -> IResult<&str, Trace> {
     let (input, name) = preceded(multispace0, parse_identifier)(input)?;
     let (input, args) = parse_args(input)?;
 
-    let (input, return_value) = preceded(
-        ws(tag("=")),
-        nom::branch::alt((parse_unknown_return, parse_return)),
-    )(input)?;
+    let (input, return_value) = preceded(ws(tag("=")), parse_return)(input)?;
     let call = Trace::Call {
         time,
         name,
@@ -81,34 +87,21 @@ fn parse_junk(input: &str) -> IResult<&str, Trace> {
 
 // -1 ENOENT (No such file or directory)
 fn parse_return(input: &str) -> IResult<&str, TraceReturn> {
-    let (input, value) = nom::branch::alt((parse_arg_hex, parse_arg_int))(input)?;
+    let (input, value) =
+        nom::branch::alt((parse_arg_unknown, parse_arg_hex, parse_arg_int))(input)?;
     let (input, constant) = opt(preceded(space0, parse_identifier))(input)?;
     let (input, comment) = opt(preceded(space0, parse_comment))(input)?;
-    let (input, duration) = preceded(
+    let (input, duration) = opt(preceded(
         multispace0,
         delimited(tag("<"), parse_float::<f64>, tag(">")),
-    )(input)?;
-    let return_value = TraceReturn::Normal {
+    ))(input)?;
+    let return_value = TraceReturn {
         value,
         constant,
         comment,
         duration,
     };
     Ok((input, return_value))
-}
-
-fn parse_unknown_return(input: &str) -> IResult<&str, TraceReturn> {
-    let (input, _) = tag("?")(input)?;
-    Ok((input, TraceReturn::Unknown))
-}
-
-fn octal_escape(input: &str) -> IResult<&str, char> {
-    let (input, _) = tag("\\")(input)?;
-    let (input, d1) = one_of("01234567")(input)?;
-    let (input, d2) = one_of("01234567")(input)?;
-    let octal_num = format!("{}{}", d1, d2);
-    let octal_num = u8::from_str_radix(&octal_num, 8).expect("failed to parse octal number");
-    Ok((input, octal_num as char))
 }
 
 fn parse_annotation(input: &str) -> IResult<&str, Annotation> {
@@ -202,15 +195,28 @@ pub fn parse_args(input: &str) -> IResult<&str, Vec<TraceArg>> {
     Ok((input, args))
 }
 
+fn parse_arg_unknown(input: &str) -> IResult<&str, TraceArg> {
+    let (input, _) = tag("?")(input)?;
+    Ok((input, TraceArg::Unknown))
+}
+
 fn parse_arg(input: &str) -> IResult<&str, TraceArg> {
     let (input, arg) = nom::branch::alt((
         parse_arg_array,
         parse_arg_list,
         parse_arg_struct,
+        parse_arg_field,
         parse_arg_fun,
         parse_arg_expr,
     ))(input)?;
     Ok((input, arg))
+}
+
+fn parse_arg_field(input: &str) -> IResult<&str, TraceArg> {
+    let (input, name) = parse_identifier(input)?;
+    let (input, _) = tag("=")(input)?;
+    let (input, value) = parse_arg(input)?;
+    Ok((input, TraceArg::Field(name, Box::new(value))))
 }
 
 fn parse_arg_expr(input: &str) -> IResult<&str, TraceArg> {
@@ -305,11 +311,11 @@ fn parse_arg_struct(input: &str) -> IResult<&str, TraceArg> {
 }
 
 // as in st_mode=S_IFDIR|0775
-fn parse_struct_field(input: &str) -> IResult<&str, (String, TraceArg)> {
+fn parse_struct_field(input: &str) -> IResult<&str, Field> {
     let (input, field) = parse_identifier(input)?;
     let (input, _) = ws(tag("="))(input)?;
     let (input, value) = parse_arg(input)?;
-    Ok((input, (field, value)))
+    Ok((input, Field(field, value)))
 }
 
 fn parse_arg_oct(input: &str) -> IResult<&str, TraceArg> {
@@ -355,12 +361,37 @@ fn parse_arg_hex(input: &str) -> IResult<&str, TraceArg> {
 fn parse_arg_int(input: &str) -> IResult<&str, TraceArg> {
     let (input, value) = parse_signed_int::<i64>(input)?;
     let (input, annotation) = opt(parse_annotation)(input)?;
-    Ok((input, TraceArg::Integer { value, annotation }))
+    Ok((input, TraceArg::Integer { value, annotation: annotation.unwrap_or_default() }))
+}
+
+fn str_escape(input: &str) -> IResult<&str, char> {
+    let (input, _) = tag("\\")(input)?;
+    let (input, c) = one_of("nrt\\\"'")(input)?;
+    let c = match c {
+        'n' => '\n',
+        'r' => '\r',
+        't' => '\t',
+        '\\' => '\\',
+        '"' => '"',
+        c => c,
+    };
+    Ok((input, c))
+}
+
+fn octal_escape(input: &str) -> IResult<&str, char> {
+    let (input, _) = tag("\\")(input)?;
+    // between 1 and 3 octal digits
+    let (input, digits) = nom::multi::many_m_n(1, 3, one_of("01234567"))(input)?;
+    let digits = digits.into_iter().collect::<String>();
+    let octal_num = u8::from_str_radix(&digits, 8).expect("failed to parse octal number");
+    Ok((input, octal_num as char))
 }
 
 fn parse_arg_string(input: &str) -> IResult<&str, TraceArg> {
-    let qs = preceded(tag("\""), in_quotes);
-    let (input, s) = terminated(qs, tag("\""))(input)?;
+    let string_char = nom::branch::alt((none_of(r#""\"#), octal_escape, str_escape));
+    let (input, quoted) = preceded(tag("\""), many0(string_char))(input)?;
+    let (input, _) = tag("\"")(input)?;
+    let s = quoted.into_iter().collect::<String>();
 
     // match "..." or backtrack
     let r: IResult<&str, &str> = tag("...")(input);
@@ -389,7 +420,7 @@ fn parse_arg_constant(input: &str) -> IResult<&str, TraceArg> {
         input,
         TraceArg::Identifier {
             value: id,
-            annotation,
+            annotation: annotation.unwrap_or_default(),
         },
     ))
 }
@@ -409,22 +440,6 @@ fn parse_identifier(input: &str) -> IResult<&str, String> {
 
 fn is_ident_char(ch: char) -> bool {
     is_alphanumeric(ch as u8) || ch == '_'
-}
-
-fn in_quotes(buf: &str) -> IResult<&str, String> {
-    let mut ret = String::new();
-    let mut skip_delimiter = false;
-    for (i, ch) in buf.char_indices() {
-        if ch == '\\' && !skip_delimiter {
-            skip_delimiter = true;
-        } else if ch == '"' && !skip_delimiter {
-            return Ok((&buf[i..], ret));
-        } else {
-            ret.push(ch);
-            skip_delimiter = false;
-        }
-    }
-    Err(nom::Err::Incomplete(nom::Needed::Unknown))
 }
 
 #[cfg(test)]
@@ -527,7 +542,7 @@ mod tests {
         let input = "(123)";
         let expected = vec![TraceArg::Integer {
             value: 123,
-            annotation: None,
+            annotation: Annotation::default(),
         }];
         let actual = parse_args(input).expect("parse failed").1;
         assert_eq!(expected, actual);
@@ -538,7 +553,7 @@ mod tests {
         let input = "123</foo/bar/baz>";
         let expected = TraceArg::Integer {
             value: 123,
-            annotation: Some(Annotation::File("/foo/bar/baz".to_string())),
+            annotation: Annotation::File("/foo/bar/baz".to_string()),
         };
         let actual = parse_arg(input).expect("parse failed").1;
         assert_eq!(expected, actual);
@@ -592,11 +607,11 @@ mod tests {
     #[test]
     fn test_parse_return() {
         let input = "-1 ENOMEM (Cannot allocate memory) <0.0>";
-        let expected = TraceReturn::Normal {
+        let expected = TraceReturn {
             value: TraceArg::integer(-1),
             constant: Some("ENOMEM".to_string()),
             comment: Some("Cannot allocate memory".to_string()),
-            duration: 0.0,
+            duration: Some(0.0),
         };
         let actual = parse_return(input).expect("parse failed").1;
         assert_eq!(expected, actual);
@@ -619,13 +634,13 @@ mod tests {
             name: "close".to_string(),
             args: vec![TraceArg::Integer {
                 value: 2,
-                annotation: Some(Annotation::CharDevice("/dev/pts/21".to_string(), 136, 21)),
+                annotation: Annotation::CharDevice("/dev/pts/21".to_string(), 136, 21),
             }],
-            return_value: TraceReturn::Normal {
+            return_value: TraceReturn {
                 value: TraceArg::integer(0),
                 constant: None,
                 comment: None,
-                duration: 0.000074,
+                duration: Some(0.000074),
             },
         };
         let (_, actual) =
@@ -640,7 +655,7 @@ mod tests {
         let input = "2</dev/pts/21<char 136:21>>";
         let expected = TraceArg::Integer {
             value: 2,
-            annotation: Some(Annotation::CharDevice("/dev/pts/21".to_string(), 136, 21)),
+            annotation: Annotation::CharDevice("/dev/pts/21".to_string(), 136, 21),
         };
         let actual = parse_arg(input).expect("parse failed").1;
         assert_eq!(expected, actual);
@@ -717,11 +732,11 @@ mod tests {
                     comment: Some("74 vars".into()),
                 },
             ],
-            return_value: TraceReturn::Normal {
+            return_value: TraceReturn {
                 value: TraceArg::integer(0),
                 constant: None,
                 comment: None,
-                duration: 0.000108,
+                duration: Some(0.000108),
             },
         };
         let actual = parse_call(input).expect("parse failed").1;
@@ -768,12 +783,17 @@ mod tests {
 
     #[test]
     fn test_parse_exit_group_0() {
-        let input = r#"1677449784.694658 exit_group(0)         = ?"#;
+        let input = r#"1677449784.694658 exit_group(0)         = ?\n"#;
         let expected = Trace::Call {
             time: 1677449784.694658,
             name: "exit_group".into(),
             args: vec![TraceArg::integer(0)],
-            return_value: TraceReturn::Unknown,
+            return_value: TraceReturn {
+                value: TraceArg::Unknown,
+                constant: None,
+                comment: None,
+                duration: None,
+            },
         };
         let actual = parse_call(input).expect("parse failed").1;
         assert_eq!(expected, actual);
@@ -787,6 +807,81 @@ mod tests {
             status: 0,
         };
         let actual = parse_line(input).expect("parse failed").1;
+        assert_eq!(expected, actual);
+    }
+    #[test]
+    fn test_parse_line_escapes() {
+        let bytes = b"\x02\x00\x00\x00\x01\x00\x06\x00\xFF\xFF\xFF\xFF\x04\x00\x06\x00\xFF\xFF\xFF\xFF \x00\x04\x00\xFF\xFF\xFF\xFF";
+        let input = r#"1677484948.336229 setxattr("foo", "system.posix_acl_access", "\2\0\0\0\1\0\6\0\377\377\377\377\4\0\6\0\377\377\377\377 \0\4\0\377\377\377\377", 28, 0) = 0 <0.000013>"#;
+        let expected = Trace::Call {
+            time: 1677484948.336229,
+            name: "setxattr".into(),
+            args: vec![
+                TraceArg::string("foo"),
+                TraceArg::string("system.posix_acl_access"),
+                TraceArg::string(
+                    &bytes
+                        .to_vec()
+                        .into_iter()
+                        .map(|b| b as char)
+                        .collect::<String>(),
+                ),
+                TraceArg::integer(28),
+                TraceArg::integer(0),
+            ],
+            return_value: TraceReturn {
+                value: TraceArg::integer(0),
+                constant: None,
+                comment: None,
+                duration: Some(0.000013),
+            },
+        };
+        let actual = parse_call(input).expect("parse failed").1;
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn test_parse_line_unknown_return() {
+        let input = r#"1677484942.188865 clock_nanosleep(CLOCK_REALTIME, 0, {tv_sec=0, tv_nsec=1000000}, NULL) = ? ERESTART_RESTARTBLOCK (Interrupted by signal) <0.000257>"#;
+        let expected = Trace::Call {
+            time: 1677484942.188865,
+            name: "clock_nanosleep".into(),
+            args: vec![
+                TraceArg::id("CLOCK_REALTIME"),
+                TraceArg::integer(0),
+                TraceArg::Struct {
+                    fields: vec![
+                        Field("tv_sec".into(), TraceArg::integer(0)),
+                        Field("tv_nsec".into(), TraceArg::integer(1000000)),
+                    ],
+                    truncated: false,
+                },
+                TraceArg::id("NULL"),
+            ],
+            return_value: TraceReturn {
+                value: TraceArg::Unknown,
+                constant: Some("ERESTART_RESTARTBLOCK".into()),
+                comment: Some("Interrupted by signal".into()),
+                duration: Some(0.000257),
+            },
+        };
+        let actual = parse_call(input).expect("parse failed").1;
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn test_octal_escape() {
+        let input = r#"\0"#;
+        let expected = 0 as char;
+        let actual = octal_escape(input).expect("parse failed").1;
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn test_octal_escape_377() {
+        let input = r#"\377"#;
+        let expected = 255 as char;
+        let actual = octal_escape(input).expect("parse failed").1;
         assert_eq!(expected, actual);
     }
 }

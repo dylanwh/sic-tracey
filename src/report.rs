@@ -91,20 +91,20 @@ mod tests {
     #[test]
     fn test_report() {
         let mut report = Report::default();
-        let annotation = Some(Annotation::File("/usr/local/bin/test".to_string()));
+        let annotation = Annotation::File("/bin/sh".to_string());
         let value: TraceArg = TraceArg::Integer {
             value: 0,
             annotation,
         };
         let constant = None;
         let comment = None;
-        let duration = 0.0;
+        let duration = Some(0.0);
 
         let trace = Trace::Call {
             time: 0.0,
             name: "open".to_string(),
             args: vec![],
-            return_value: TraceReturn::Normal {
+            return_value: TraceReturn {
                 value,
                 constant,
                 comment,
@@ -117,6 +117,6 @@ mod tests {
         trace_log.drive(&mut report);
 
         assert_eq!(report.files.len(), 1);
-        assert!(report.files.contains(&PathBuf::from("/usr/local/bin/test")));
+        assert!(report.files.contains(&PathBuf::from("/bin/sh")));
     }
 }

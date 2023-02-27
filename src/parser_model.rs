@@ -1,63 +1,103 @@
 use derive_visitor::Drive;
+use serde::Serialize;
 
-#[derive(Debug, Drive)]
+#[derive(Debug, Drive, Serialize)]
 pub struct TraceLog {
     pub traces: Vec<Trace>,
 }
 
-#[derive(Debug, PartialEq, Drive)]
+#[derive(Debug, PartialEq, Drive, Serialize)]
 pub enum Trace {
     Call {
+        #[drive(skip)]
         time: f64,
+
+        #[drive(skip)]
         name: String,
+
         args: Vec<TraceArg>,
         return_value: TraceReturn,
     },
 
     Exit {
+        #[drive(skip)]
         time: f64,
+
+        #[drive(skip)]
         status: i32,
     },
+
+    #[drive(skip)]
     Junk(String),
 }
 
-#[derive(Debug, PartialEq, Drive)]
+#[derive(Debug, PartialEq, Drive, Serialize)]
+pub struct Field(#[drive(skip)] pub String, pub TraceArg);
+
+#[derive(Debug, PartialEq, Drive, Serialize)]
 pub enum TraceArg {
     Identifier {
+        #[drive(skip)]
         value: String,
-        annotation: Option<Annotation>,
+        annotation: Annotation,
     },
     String {
+        #[drive(skip)]
         value: String,
+
+        #[drive(skip)]
         truncated: bool,
     },
     Array {
         values: Vec<TraceArg>,
+
+        #[drive(skip)]
         truncated: bool,
     },
     Struct {
-        fields: Vec<(String, TraceArg)>,
+        fields: Vec<Field>,
+
+        #[drive(skip)]
         truncated: bool,
     },
     Integer {
+        #[drive(skip)]
         value: i64,
-        annotation: Option<Annotation>,
+
+        annotation: Annotation,
     },
     HexInteger {
+        #[drive(skip)]
         value: u64,
+
+        #[drive(skip)]
         comment: Option<String>,
     },
+
+    #[drive(skip)]
     OctInteger(u64),
+
     BitwiseOr(Box<TraceArg>, Box<TraceArg>),
+
     Mul(Box<TraceArg>, Box<TraceArg>),
+
+    #[drive(skip)]
+    Field(String, Box<TraceArg>),
+
     List {
         args: Vec<TraceArg>,
+
+        #[drive(skip)]
         truncated: bool,
     },
     Fun {
+        #[drive(skip)]
         name: String,
+
+        #[drive(skip)]
         args: Vec<TraceArg>,
     },
+    Unknown,
 }
 
 impl TraceArg {
@@ -81,7 +121,7 @@ impl TraceArg {
     pub fn id(s: &str) -> Self {
         TraceArg::Identifier {
             value: s.to_string(),
-            annotation: None,
+            annotation: Annotation::default(),
         }
     }
 
@@ -94,11 +134,11 @@ impl TraceArg {
         match self {
             Self::Identifier { value, .. } => TraceArg::Identifier {
                 value: value.clone(),
-                annotation: Some(Annotation::File(annotation)),
+                annotation: Annotation::File(annotation),
             },
             Self::Integer { value, .. } => TraceArg::Integer {
                 value: *value,
-                annotation: Some(Annotation::File(annotation)),
+                annotation: Annotation::File(annotation),
             },
             _ => panic!("cannot annotate {:?}", self),
         }
@@ -108,26 +148,34 @@ impl TraceArg {
     pub fn integer(arg: i64) -> TraceArg {
         Self::Integer {
             value: arg,
-            annotation: None,
+            annotation: Annotation::default(),
         }
     }
 }
 
-#[derive(Debug, PartialEq, Drive)]
-pub enum TraceReturn {
-    Normal {
-        value: TraceArg,
-        constant: Option<String>,
-        comment: Option<String>,
-        duration: f64,
-    },
-    Unknown, // ?
+#[derive(Debug, PartialEq, Drive, Serialize)]
+pub struct TraceReturn {
+    pub value: TraceArg,
+    #[drive(skip)]
+    pub constant: Option<String>,
+
+    #[drive(skip)]
+    pub comment: Option<String>,
+
+    #[drive(skip)]
+    pub duration: Option<f64>,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, PartialOrd, Ord, Hash, Drive)]
+#[derive(Debug, PartialEq, Eq, Clone, PartialOrd, Ord, Hash, Drive, Serialize, Default)]
 pub enum Annotation {
+    #[drive(skip)]
     File(String),
+
+    #[drive(skip)]
     CharDevice(String, u32, u32),
+
+    #[default]
+    Empty,
 }
 
 impl Annotation {
@@ -135,6 +183,7 @@ impl Annotation {
         match self {
             Self::File(path) => path,
             Self::CharDevice(path, _, _) => path,
+            Self::Empty => "",
         }
     }
 }

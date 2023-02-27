@@ -40,6 +40,14 @@ pub enum Action {
         #[clap(default_value = "latest")]
         uuid: String,
     },
+
+    /// Parse a file and print the output to stdout.
+    Parse {
+        /// file to parse
+        /// required.
+        #[clap(required = true)]
+        file: String,
+    },
 }
 
 impl Args {
