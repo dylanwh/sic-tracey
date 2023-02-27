@@ -5,7 +5,7 @@ use std::{
 
 use derive_visitor::Visitor;
 
-use crate::parser_model::{Annotation, TraceArg};
+use crate::parser_model::{Annotation, Trace, TraceArg};
 
 #[derive(Debug, Default, Visitor)]
 #[visitor(Annotation(enter), TraceArg(enter))]
@@ -62,6 +62,20 @@ impl Report {
                     self.insert(target);
                 }
             }
+        }
+    }
+}
+
+#[derive(Debug, Default, Visitor)]
+#[visitor(Trace(enter))]
+pub struct JunkReport {
+    pub junk: HashSet<String>,
+}
+
+impl JunkReport {
+    fn enter_trace(&mut self, trace: &Trace) {
+        if let Trace::Junk(line) = trace {
+            self.junk.insert(line.to_string());
         }
     }
 }

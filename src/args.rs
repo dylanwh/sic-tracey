@@ -29,6 +29,12 @@ pub enum Action {
     /// List uuids of all strace logs in the output directory, one per line.
     List,
 
+    /// Show junk lines from a strace log by uuid. Only a unique subset of the uuid is required.
+    Junk {
+        #[clap(default_value = "latest")]
+        uuid: String,
+    },
+
     /// Show a strace log by uuid. Only a unique subset of the uuid is required.
     Files {
         #[clap(default_value = "latest")]

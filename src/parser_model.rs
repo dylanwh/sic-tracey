@@ -18,6 +18,7 @@ pub enum Trace {
         time: f64,
         status: i32,
     },
+    Junk(String),
 }
 
 #[derive(Debug, PartialEq, Drive)]

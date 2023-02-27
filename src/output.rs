@@ -101,4 +101,24 @@ impl TraceOutput {
 
         Ok(dirs)
     }
+
+    pub fn find(output_dir: &str, uuid: &str) -> Result<Self> {
+        let dirs = Self::list(output_dir)?;
+        let dir = dirs
+            .iter()
+            .find(|d| {
+                d.file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .contains(uuid)
+            })
+            .ok_or(eyre::eyre!("no matching directory found"))?;
+        Self::open(dir)
+    }
+
+    pub fn find_latest(output_dir: &str) -> Result<Self> {
+        let dirs = Self::list(output_dir)?;
+        let dir = dirs.last().ok_or(eyre::eyre!("no strace logs found"))?;
+        Self::open(dir)
+    }
 }

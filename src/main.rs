@@ -10,7 +10,7 @@ use args::*;
 use derive_visitor::Drive;
 use eyre::Result;
 use output::*;
-use report::Report;
+use report::{JunkReport, Report};
 
 pub const STRACE_OPTIONS: &str = "-ff -y -yy -T -ttt";
 
@@ -26,26 +26,42 @@ fn main() -> Result<ExitCode> {
         Action::Files { uuid } => files(&args, &uuid),
 
         Action::List => list(&args),
+
+        Action::Junk { uuid } => junk(&args, &uuid),
     }
 }
 
-fn files(args: &Args, uuid: &str) -> Result<ExitCode> {
-    let dirs = TraceOutput::list(&args.output_dir)?;
-    if dirs.is_empty() {
-        println!("No strace logs found in {}", args.output_dir);
-        return Ok(ExitCode::SUCCESS);
+fn junk(args: &Args, uuid: &str) -> Result<ExitCode> {
+    let output = if uuid == "latest" {
+        TraceOutput::find_latest(&args.output_dir)
+    } else {
+        TraceOutput::find(&args.output_dir, uuid)
+    }?;
+    let mut report = JunkReport::default();
+    for log in output.strace_files() {
+        let trace_log = parser::parse_file(log.path())?;
+        trace_log.drive(&mut report);
     }
-    if uuid == "latest" {
-        let dir = dirs.last().expect("No strace logs found");
-        let output = TraceOutput::open(dir)?;
-        let mut report = Report::default();
-        for log in output.strace_files() {
-            let trace_log = parser::parse_file(log.path())?;
-            trace_log.drive(&mut report);
-        }
-        for file in report.files {
-            println!("{}", file.to_string_lossy());
-        }
+    for junk in report.junk {
+        println!("{}", junk);
+    }
+
+    Ok(ExitCode::SUCCESS)
+}
+
+fn files(args: &Args, uuid: &str) -> Result<ExitCode> {
+    let output = if uuid == "latest" {
+        TraceOutput::find_latest(&args.output_dir)
+    } else {
+        TraceOutput::find(&args.output_dir, uuid)
+    }?;
+    let mut report = Report::default();
+    for log in output.strace_files() {
+        let trace_log = parser::parse_file(log.path())?;
+        trace_log.drive(&mut report);
+    }
+    for file in report.files {
+        println!("{}", file.to_string_lossy());
     }
 
     Ok(ExitCode::SUCCESS)

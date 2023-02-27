@@ -38,23 +38,8 @@ fn parse_line(input: &str) -> IResult<&str, Trace> {
             nom::error::ErrorKind::Eof,
         )));
     }
-    let (input, trace) = nom::branch::alt((parse_call, parse_exit))(input)?;
+    let (input, trace) = nom::branch::alt((parse_call, parse_exit, parse_junk))(input)?;
     Ok((input, trace))
-}
-
-// 1677449784.694738 +++ exited with 0 +++
-fn parse_exit(input: &str) -> IResult<&str, Trace> {
-    let (input, time) = parse_float::<f64>(input)?;
-    let (input, _) = tag(" +++ exited with ")(input)?;
-    let (input, exit_code) = parse_signed_int::<i32>(input)?;
-    let (input, _) = tag(" +++")(input)?;
-    Ok((
-        input,
-        Trace::Exit {
-            time,
-            status: exit_code,
-        },
-    ))
 }
 
 pub fn parse_call(input: &str) -> IResult<&str, Trace> {
@@ -73,6 +58,25 @@ pub fn parse_call(input: &str) -> IResult<&str, Trace> {
         return_value,
     };
     Ok((input, call))
+}
+
+fn parse_exit(input: &str) -> IResult<&str, Trace> {
+    let (input, time) = parse_float::<f64>(input)?;
+    let (input, _) = tag(" +++ exited with ")(input)?;
+    let (input, exit_code) = parse_signed_int::<i32>(input)?;
+    let (input, _) = tag(" +++")(input)?;
+    Ok((
+        input,
+        Trace::Exit {
+            time,
+            status: exit_code,
+        },
+    ))
+}
+
+fn parse_junk(input: &str) -> IResult<&str, Trace> {
+    let (input, junk) = take_until("\n")(input)?;
+    Ok((input, Trace::Junk(junk.to_string())))
 }
 
 // -1 ENOENT (No such file or directory)
